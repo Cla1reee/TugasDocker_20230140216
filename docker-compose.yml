@@ -1,0 +1,68 @@
+services:
+  # PostgreSQL Database Service
+  postgres:
+    image: postgres:15-alpine
+    container_name: deploy-postgres
+    environment:
+      POSTGRES_DB: deploy_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Pastikan lokasi file init-db.sql benar-benar sejajar dengan docker-compose.yml
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d deploy_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - deploy-network
+    restart: unless-stopped
+
+  # Spring Boot Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deploy-app
+    environment:
+      # Nama service 'postgres' valid karena DNS internal Docker Compose
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/deploy_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      # [KOREKSI FATAL]: Diubah menjadi 'none' atau 'update'.
+      # 'update' lebih aman jika kamu menambah atribut di model Java nantinya tanpa menghapus data tabel.
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
+      SERVER_PORT: 8080
+      DEBUG: "true"
+    ports:
+      # Ingat, akses aplikasimu di browser lewat localhost:8081, BUKAN 8080
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./src/main/resources/static/images:/app/images
+    networks:
+      - deploy-network
+    restart: unless-stopped
+    healthcheck:
+      # [PERINGATAN]: Jika path '/' tidak ada, ganti URL ini ke endpoint yang valid, misalnya 'http://localhost:8080/login'
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  deploy-network:
+    driver: bridge
